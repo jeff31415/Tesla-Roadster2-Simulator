@@ -35,7 +35,25 @@
 
 > **提示**：若起飞时仍按住油门 W 键，系统会暂时锁定 Pitch 轴并提示 `RELEASE [W] TO ENGAGE PITCH`，松开按键后即可自由俯仰。
 
-### 3. 特殊玩法与作弊选项（HUD / Settings 面板）
+### 3. 手柄支持（标准映射）
+
+Xbox / DualShock / DualSense 类手柄即插即用，连接后 HUD 顶部显示 `PAD: <设备名>`。摇杆与扳机为全模拟量（摇杆死区 0.14、扳机 0.05，区内归零、区外重标定到满量程），可与键盘叠加输入。
+
+| 手柄 | 地面 | 飞行 |
+|---|---|---|
+| **左摇杆** | 模拟转向（左 ≡ A）／Orbit 相机旋转 | 偏航（左 ≡ A） |
+| **右摇杆** | Orbit 相机（飞行模式之外） | 俯仰（后拉 ≡ S 抬头）／滚转（右 ≡ E） |
+| **RT**（右扳机） | 模拟油门（≡ W） | 尾部火箭助推（≡ Shift） |
+| **LT**（左扳机） | 刹车／倒车（≡ S） | 模拟升力（≡ Space） |
+| **A / LB** | 升力喷口 | 请求升力 |
+| **X** | 助推 | 助推 |
+| **Y** | 切换相机 | 切换相机 |
+| **View / Select** | 重置车辆、姿态与气罐 | 重置 |
+| **D-pad ↑ / ↓** | 缩放 Orbit 相机（3–35m） | 缩放 Orbit 相机 |
+
+手柄与键盘共享同一物理、起飞互锁与反转管线：飞行轴反转同样作用于手柄摇杆，起飞瞬间按住俯仰摇杆会触发相同的 Pitch 锁定。振动反馈（撞击／坠毁／发射／助推）默认开启（`joypad.js`），不支持的设备静默降级。手柄映射固定，改键仅作用于键盘。
+
+### 4. 特殊玩法与作弊选项（HUD / Settings 面板）
 
 - **Orbit 自由相机**：切换至 Orbit 视角后，在画布上按住鼠标左键（或触控）拖拽即可自由 360° 旋转视角，滑动滚轮可自由拉近/推远镜头。
 - **Bullet Time（子弹时间）**：在设置面板勾选后，在空中享受 0.5x 慢镜头特技操控。
@@ -56,7 +74,7 @@
 ```text
 roadster-lab/dist/roadster-rocket-standalone.html
 ```
-- 体积约 1.48 MB，内联全部 17 个运行模块、CSS 与 Three.js 脚本；
+- 体积约 1.56 MB，内联全部 21 个运行模块（含本地附带的 `gamecontroller.js` / `joypad.js` 手柄库）、CSS 与 Three.js 脚本；
 - 彻底解除浏览器 `file://` 协议下的 CORS 限制，单文件随处可玩。
 
 ### 方式二：静态 HTTP 服务运行
@@ -88,17 +106,20 @@ cd roadster-lab
 # 1. 运行 148 项物理、动力学与飞控闭环单测
 node --test scripts/test-simulator.mjs
 
-# 2. 运行 17 项单 HTML 打包器构建测试
+# 2. 运行 14 项手柄输入／合并／互锁／震动单测
+node --test scripts/test-gamepad.mjs
+
+# 3. 运行 17 项单 HTML 打包器构建测试
 node --test scripts/test-single-html.mjs
 
-# 3. 运行 DOM 状态与资产校验
+# 4. 运行 DOM 状态与资产校验
 node scripts/check-ui-state.mjs
 npm run check
 
-# 4. 运行单文件离线 Chromium 自动化测试（需 python3 与 playwright）
+# 5. 运行单文件离线 Chromium 自动化测试（需 python3 与 playwright）
 python3 scripts/test-standalone.py
 
-# 5. 运行主应用 Chromium 浏览器全量交互测试
+# 6. 运行主应用 Chromium 浏览器全量交互测试
 python3 scripts/test-browser.py
 ```
 
@@ -106,4 +127,4 @@ python3 scripts/test-browser.py
 
 ## 📄 许可证
 
-本项目遵循 MIT 许可证。内置 Three.js (r170) 遵循其官方 MIT 许可。
+本项目遵循 MIT 许可证。内置 Three.js (r170)、gamecontroller.js 与 joypad.js 遵循其官方 MIT 许可。

@@ -28,6 +28,7 @@ body { background: #060d18; }
 .sim-mission time { padding-left: 17px; border-left: 1px solid var(--sim-line); color: var(--sim-muted); }
 #sim-slow-mo { color: #ffab61; }
 #sim-camera-view { color: #9aaec2; font-size: 9px; }
+#sim-gamepad { color: var(--sim-cyan); font-size: 9px; }
 #sim-assist-status { color: var(--sim-muted); font-size: 9px; }
 #sim-assist-status.sim-active { color: var(--sim-cyan); }
 .sim-status-dot, .sim-orange-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sim-cyan); box-shadow: 0 0 12px #65e5ed70; }
@@ -151,7 +152,7 @@ body { background: #060d18; }
   #sim-hud h1 { font-size: 24px; }
   .sim-brand .sim-eyebrow { font-size: 7px; letter-spacing: 1px; }
   .sim-mission { gap: 8px; font-size: 9px; }
-  #sim-assist-status, .sim-mission time { display: none; }
+  #sim-assist-status, #sim-gamepad, .sim-mission time { display: none; }
   .sim-left, .sim-right { top: 88px; width: 190px; gap: 9px; }
   .sim-left { left: 16px; } .sim-right { right: 16px; }
   .sim-panel { padding: 12px; }

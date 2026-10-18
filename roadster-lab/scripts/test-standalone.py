@@ -137,7 +137,7 @@ def main():
                     return location.protocol === 'file:' && document.body.contains(canvas) &&
                         canvas.width > 0 && canvas.height > 0 && rocketLab.frame > 2;
                 }''')
-                check('17 bundled modules initialize physics, world, UI, camera, time scale and playback', '''() => {
+                check('21 bundled modules initialize physics, world, UI, camera, time scale, playback and gamepad', '''() => {
                     const lab = rocketLab;
                     return !!(lab.body && lab.controller && lab.model.car && lab.scene && lab.world &&
                         lab.npcs && lab.audio && lab.ui && lab.keybindPanel && lab.pitchLock) &&
@@ -145,10 +145,12 @@ def main():
                         ['cycle','update','rotate','zoom'].every(key => typeof lab.cameraRig?.[key] === 'function') &&
                         ['startRecording','record','onReset','start','advance','exit'].every(
                             key => typeof lab.playback?.[key] === 'function') &&
+                        typeof lab.pad?.poll === 'function' && typeof lab.pad?.start === 'function' &&
+                        typeof lab.rumble?.update === 'function' &&
                         typeof lab.exitReplay === 'function' && lab.settings.bulletTime === false &&
                         lab.cameraRig.mode === 0 && !lab.playback.recording && !lab.playback.playing;
-                }''', prerequisite=len(modules) == 17 and len(set(modules)) == 17 and
-                      {'camera-rig.js', 'time-scale.js', 'playback.js'}.issubset(modules))
+                }''', prerequisite=len(modules) == 21 and len(set(modules)) == 21 and
+                      {'camera-rig.js', 'time-scale.js', 'playback.js', 'gamepad-input.js', 'gamepad-rumble.js'}.issubset(modules))
                 check('initial telemetry reports ground and 80 MPa', '''
                     rocketLab.body.mode === 'GROUND' && rocketLab.body.pressure === 80000000 &&
                     document.querySelector('#sim-pressure').textContent === '80.0' &&

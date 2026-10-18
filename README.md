@@ -35,7 +35,25 @@ Attitude control automatically engages after 0.15 seconds of being airborne:
 
 > **Note**: If the throttle (W) is still held when leaving the ground, pitch commands are temporarily locked with a HUD warning (`RELEASE [W] TO ENGAGE PITCH`) to prevent accidental nose-dives. Release the key to engage normal pitch control.
 
-### 3. Special Gameplay & Cheat Options (HUD / Settings Panel)
+### 3. Gamepad Support (Standard Mapping)
+
+Xbox / DualShock / DualSense style controllers work out of the box — the HUD shows `PAD: <device name>` when connected. Sticks and triggers are fully analog (0.14 stick / 0.05 trigger deadzone, rescaled to full range) and can be combined with the keyboard.
+
+| Gamepad | Ground | Flight |
+|---|---|---|
+| **Left stick** | Analog steering (left ≡ A) / orbit camera rotate | Yaw (left ≡ A) |
+| **Right stick** | Orbit camera (outside flight mode) | Pitch (pull back ≡ S, nose up) / Roll (right ≡ E) |
+| **RT** (right trigger) | Analog throttle (≡ W) | Rear rocket boost (≡ Shift) |
+| **LT** (left trigger) | Brake / reverse (≡ S) | Analog lift (≡ Space) |
+| **A / LB** | Lift thrusters | Request lift |
+| **X** | Boost | Boost |
+| **Y** | Cycle camera | Cycle camera |
+| **View / Select** | Reset vehicle, attitude and tank | Reset |
+| **D-pad ↑ / ↓** | Zoom orbit camera (3–35 m) | Zoom orbit camera |
+
+The pad shares the keyboard's physics, takeoff interlock and inversion pipeline: flight axis inversions also apply to pad sticks, and grabbing the pitch stick during liftoff triggers the same pitch lock. Rumble feedback (impact / crash / launch / boost) is on by default via `joypad.js` and degrades silently where unsupported. The mapping is fixed — key remapping applies to the keyboard only.
+
+### 4. Special Gameplay & Cheat Options (HUD / Settings Panel)
 
 - **Orbit Camera**: Switch to Orbit view, then click/touch and drag on the canvas to rotate 360° around the car. Use the mouse wheel to zoom in/out.
 - **Bullet Time**: Toggle in the settings panel to enjoy 0.5x slow-motion stunt control while airborne. Ground driving remains 1.0x real-time.
@@ -56,7 +74,7 @@ Open the self-contained HTML file directly in any modern browser:
 ```text
 roadster-lab/dist/roadster-rocket-standalone.html
 ```
-- Approximately 1.48 MB, bundling all 17 runtime modules, CSS, and Three.js;
+- Approximately 1.56 MB, bundling all 21 runtime modules (including the vendored `gamecontroller.js` / `joypad.js` gamepad libraries), CSS, and Three.js;
 - Completely removes browser CORS restrictions under `file://`.
 
 ### Option 2: Run with Static HTTP Server
@@ -88,17 +106,20 @@ cd roadster-lab
 # 1. Run 148 physics, dynamics, and flight control unit tests
 node --test scripts/test-simulator.mjs
 
-# 2. Run 17 single-file HTML bundler verification tests
+# 2. Run 14 gamepad input / merge / interlock / rumble tests
+node --test scripts/test-gamepad.mjs
+
+# 3. Run 17 single-file HTML bundler verification tests
 node --test scripts/test-single-html.mjs
 
-# 3. Run DOM state and 3D asset geometry checks
+# 4. Run DOM state and 3D asset geometry checks
 node scripts/check-ui-state.mjs
 npm run check
 
-# 4. Run standalone offline Chromium automated tests (requires Python 3 and Playwright)
+# 5. Run standalone offline Chromium automated tests (requires Python 3 and Playwright)
 python3 scripts/test-standalone.py
 
-# 5. Run full browser Chromium regression test suite
+# 6. Run full browser Chromium regression test suite
 python3 scripts/test-browser.py
 ```
 
@@ -106,4 +127,4 @@ python3 scripts/test-browser.py
 
 ## 📄 License
 
-This project is licensed under the MIT License. Embedded Three.js (r170) is licensed under its official MIT License.
+This project is licensed under the MIT License. Embedded Three.js (r170), gamecontroller.js and joypad.js are licensed under their official MIT Licenses.

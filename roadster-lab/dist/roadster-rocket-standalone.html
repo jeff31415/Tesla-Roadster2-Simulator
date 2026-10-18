@@ -55,6 +55,7 @@ body { background: #060d18; }
 .sim-mission time { padding-left: 17px; border-left: 1px solid var(--sim-line); color: var(--sim-muted); }
 #sim-slow-mo { color: #ffab61; }
 #sim-camera-view { color: #9aaec2; font-size: 9px; }
+#sim-gamepad { color: var(--sim-cyan); font-size: 9px; }
 #sim-assist-status { color: var(--sim-muted); font-size: 9px; }
 #sim-assist-status.sim-active { color: var(--sim-cyan); }
 .sim-status-dot, .sim-orange-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sim-cyan); box-shadow: 0 0 12px #65e5ed70; }
@@ -178,7 +179,7 @@ body { background: #060d18; }
   #sim-hud h1 { font-size: 24px; }
   .sim-brand .sim-eyebrow { font-size: 7px; letter-spacing: 1px; }
   .sim-mission { gap: 8px; font-size: 9px; }
-  #sim-assist-status, .sim-mission time { display: none; }
+  #sim-assist-status, #sim-gamepad, .sim-mission time { display: none; }
   .sim-left, .sim-right { top: 88px; width: 190px; gap: 9px; }
   .sim-left { left: 16px; } .sim-right { right: 16px; }
   .sim-panel { padding: 12px; }
@@ -55547,8 +55548,12 @@ class FlightController {
     if (body.mode !== 'FLIGHT') {
       this.reset();
       // Ground steering and drive belong to the wheel controller, not the jets.
-      if (input.boost) out.fill(1, 0, 4);
-      if (input.lift) out.fill(1, 4, 8);
+      // Axis fields (always finite from the input merge) scale the jets linearly;
+      // boolean-only callers (tests) fall back to full deflection.
+      const boost = Number.isFinite(input.boostAxis) ? clamp(input.boostAxis, 0, 1) : Number(!!input.boost);
+      const lift = Number.isFinite(input.liftAxis) ? clamp(input.liftAxis, 0, 1) : Number(!!input.lift);
+      if (boost > 0) out.fill(boost, 0, 4);
+      if (lift > 0) out.fill(lift, 4, 8);
       return out;
     }
 
@@ -55568,11 +55573,15 @@ class FlightController {
     const omega = [finite(body.omega?.x), finite(body.omega?.y), finite(body.omega?.z)];
     // Pilot-facing roll convention: Q/rollLeft commands negative body-X,
     // E/rollRight positive. Flight yaw now shares ground's D=-Y/A=+Y baseline.
-    const axes = [Number(!!input.rollRight) - Number(!!input.rollLeft),
-      Number(!!input.left) - Number(!!input.right),
-      Number(!!input.back) - Number(!!input.forward)];
+    // Finite axis fields come from the gamepad merge; booleans remain the fallback.
+    const command = (axisValue, positive, negative) => Number.isFinite(axisValue)
+      ? clamp(axisValue, -1, 1)
+      : Number(!!positive) - Number(!!negative);
+    const axes = [command(input.rollAxis, input.rollRight, input.rollLeft),
+      command(input.yawAxis, input.left, input.right),
+      command(input.pitchAxis, input.back, input.forward)];
     const rate = clamp(finite(settings.rate, 180), 90, 360) * DEG;
-    let requestedLift = input.lift ? 1 : 0;
+    let requestedLift = Number.isFinite(input.liftAxis) ? clamp(input.liftAxis, 0, 1) : Number(!!input.lift);
     const assisted = !!settings.assisted;
     const wasLanding = this.landingActive;
     this.landingActive = false;
@@ -55652,7 +55661,8 @@ class FlightController {
       torque[2] = axes[2] * .325 * 2 * (frontArm + rearArm) * liftForce;
     }
 
-    if (input.boost) out.fill(1, 0, 4);
+    const boostCommand = Number.isFinite(input.boostAxis) ? clamp(input.boostAxis, 0, 1) : Number(!!input.boost);
+    if (boostCommand > 0) out.fill(boostCommand, 0, 4);
     const yaw = clamp(torque[1] / (yawArm * yawForce), -1, 1);
     out[8] = Math.max(0, yaw);
     out[9] = Math.max(0, -yaw);
@@ -55754,7 +55764,9 @@ class VehiclePhysics {
     for(let i=0;i<10;i++)this.throttles[i]=this.crashed?0:clamp(Number.isFinite(throttles[i])?throttles[i]:0,0,1);
     // Ground steering uses the driver's screen-side convention. This sign is
     // deliberately independent of the flight controller's yaw mixer.
-    const target=this.crashed?0:((input.left?1:0)-(input.right?1:0))*.49;
+    // steerAxis (gamepad/pad merge) wins when present; booleans stay bit-identical.
+    const steer=Number.isFinite(input.steerAxis)?clamp(input.steerAxis,-1,1):((input.left?1:0)-(input.right?1:0));
+    const target=this.crashed?0:steer*.49;
     this.steer+=(target-this.steer)*(1-Math.exp(-dt*9));
     let peakG=0, hadContact=false;
     // Four solver microsteps stabilize damping and hard bump stops, while the
@@ -55797,12 +55809,14 @@ class VehiclePhysics {
         const longitudinalSpeed=pv.dot(forward),lateralSpeed=pv.dot(lateral);
         let longitudinal=-longitudinalSpeed*38;
         if(!this.crashed&&this.mode==='GROUND'){
-          if(input.forward&&w.x<0)longitudinal+=4500*Math.max(.22,1-Math.abs(longitudinalSpeed)/105);
-          if(input.back){
-            if(longitudinalSpeed>.5)longitudinal-=Math.min(6000,longitudinalSpeed*m/(4*h));
-            else if(w.x<0)longitudinal-=3000;
+          const drive=Number.isFinite(input.driveAxis)?clamp(input.driveAxis,0,1):(input.forward?1:0);
+          const brake=Number.isFinite(input.brakeAxis)?clamp(input.brakeAxis,0,1):(input.back?1:0);
+          if(drive>0&&w.x<0)longitudinal+=4500*drive*Math.max(.22,1-Math.abs(longitudinalSpeed)/105);
+          if(brake>0){
+            if(longitudinalSpeed>.5)longitudinal-=Math.min(6000,longitudinalSpeed*m/(4*h))*brake;
+            else if(w.x<0)longitudinal-=3000*brake;
           }
-          if(!input.forward&&!input.back&&Math.abs(longitudinalSpeed)<.25)longitudinal-=longitudinalSpeed*m/(4*h);
+          if(drive<=0&&brake<=0&&Math.abs(longitudinalSpeed)<.25)longitudinal-=longitudinalSpeed*m/(4*h);
         }
         const latForce=-lateralSpeed*7200;
         const limit=normal*1.12,desired=Math.hypot(longitudinal,latForce),scale=desired>limit?limit/(desired||1):1;
@@ -56342,7 +56356,7 @@ function createUI({onReset = () => {}, onRefill = () => {}, onSettings = () => {
   root.innerHTML = `
     <header class="sim-header">
       <div class="sim-brand"><span class="sim-eyebrow">EXPERIMENTAL VEHICLE PROGRAM / 01</span><h1>ROADSTER <span>/ ROCKET LAB</span></h1></div>
-      <div class="sim-mission"><span class="sim-status-dot"></span><strong id="sim-mode">GROUND</strong><span id="sim-assist-status">ASSIST READY</span><span id="sim-camera-view">VIEW: 3/4 CHASE</span><span id="sim-record-status" hidden>REC</span><span id="sim-slow-mo" hidden>SLOW-MO 0.5x</span><time id="sim-time">T+ 00:00</time></div>
+      <div class="sim-mission"><span class="sim-status-dot"></span><strong id="sim-mode">GROUND</strong><span id="sim-assist-status">ASSIST READY</span><span id="sim-camera-view">VIEW: 3/4 CHASE</span><span id="sim-gamepad" class="sim-gamepad" hidden></span><span id="sim-record-status" hidden>REC</span><span id="sim-slow-mo" hidden>SLOW-MO 0.5x</span><time id="sim-time">T+ 00:00</time></div>
     </header>
     <div id="sim-pitch-warning" class="sim-pitch-warning" role="alert" aria-live="assertive" hidden></div>
     <aside class="sim-left" aria-label="Vehicle telemetry">
@@ -56394,7 +56408,7 @@ function createUI({onReset = () => {}, onRefill = () => {}, onSettings = () => {
       </section>
       <details class="sim-panel sim-help" open>
         <summary>FLIGHT MANUAL <span>ESC TO DRIVE / HIDE −</span></summary>
-        <div class="sim-key-grid"><div><kbd data-key-action="forward">W</kbd><kbd data-key-action="back">S</kbd><span>Accelerate / brake <small>Ground</small></span></div><div><kbd data-key-action="pitchDown">W</kbd><kbd data-key-action="pitchUp">S</kbd><span>Nose down / up <small>Flight</small></span></div><div><kbd data-key-action="left">A</kbd><kbd data-key-action="right">D</kbd><span>Steer / yaw</span></div><div><kbd data-key-action="rollLeft">Q</kbd><kbd data-key-action="rollRight">E</kbd><span>Roll left / right</span></div><div><kbd data-key-action="lift">Space</kbd><span>Lift</span><kbd data-key-action="boost">Shift</kbd><span>Boost</span></div><div><kbd data-key-action="camera">C</kbd><span>Camera</span><kbd data-key-action="reset">R</kbd><span>Reset</span></div></div>
+        <div class="sim-key-grid"><div><kbd data-key-action="forward">W</kbd><kbd data-key-action="back">S</kbd><span>Accelerate / brake <small>Ground</small></span></div><div><kbd data-key-action="pitchDown">W</kbd><kbd data-key-action="pitchUp">S</kbd><span>Nose down / up <small>Flight</small></span></div><div><kbd data-key-action="left">A</kbd><kbd data-key-action="right">D</kbd><span>Steer / yaw</span></div><div><kbd data-key-action="rollLeft">Q</kbd><kbd data-key-action="rollRight">E</kbd><span>Roll left / right</span></div><div><kbd data-key-action="lift">Space</kbd><span>Lift</span><kbd data-key-action="boost">Shift</kbd><span>Boost</span></div><div><kbd data-key-action="camera">C</kbd><span>Camera</span><kbd data-key-action="reset">R</kbd><span>Reset</span></div><div><kbd>LS</kbd><kbd>RT/LT</kbd><span>Steer / throttle / brake <small>Gamepad</small></span></div><div><kbd>RS</kbd><kbd>Y · View</kbd><span>Camera / roll + pitch <small>Gamepad</small></span></div></div>
       </details>
     </footer>`;
   document.body.appendChild(root);
@@ -56451,6 +56465,8 @@ function createUI({onReset = () => {}, onRefill = () => {}, onSettings = () => {
     root.classList.toggle('sim-crashed', crashed);
     root.classList.toggle('sim-low-gas', pressure < 5);
     text('camera-view', `VIEW: ${state.cameraView || '3/4 CHASE'}`);
+    nodes.gamepad.hidden = !state.gamepad;
+    if (state.gamepad) text('gamepad', `PAD: ${state.gamepad}`);
     nodes['slow-mo'].hidden = !state.slowMo;
     text('record-status', state.replaying ? 'REPLAYING' : `● REC ${Math.max(0,finite(state.recordSeconds)).toFixed(1)}s`);
     nodes['record-status'].hidden = !state.recording && !state.replaying;
@@ -57157,18 +57173,27 @@ __modules[12] = (function(__deps) {
  */
 class TakeoffPitchLock {
   constructor(){this.reset();}
-  reset(){this.previousMode='GROUND';this.blocked=new Set();}
-  get locked(){return this.blocked.size>0;}
-  update(mode,keys,keybinds){
+  reset(){this.previousMode='GROUND';this.blocked=new Set();this.padBlocked=false;}
+  get locked(){return this.blocked.size>0||this.padBlocked;}
+  /** padPitchHeld: right stick beyond the hold threshold at the GROUND→FLIGHT edge.
+   *  Mirrors the physical-key interlock: the stick must return to centre first. */
+  update(mode,keys,keybinds,padPitchHeld=false){
     if(mode==='FLIGHT'&&this.previousMode==='GROUND'){
       for(const code of keys)if(keybinds.matches('pitchDown',code)||keybinds.matches('forward',code))this.blocked.add(code);
+      if(padPitchHeld)this.padBlocked=true;
     }
     for(const code of this.blocked)if(!keys.has(code))this.blocked.delete(code);
-    if(mode!=='FLIGHT')this.blocked.clear();
+    if(!padPitchHeld)this.padBlocked=false;
+    if(mode!=='FLIGHT'){this.blocked.clear();this.padBlocked=false;}
     this.previousMode=mode;
     return this.locked;
   }
-  filter(input,mode){return this.locked&&mode==='FLIGHT'?{...input,forward:false,back:false}:input;}
+  filter(input,mode){
+    if(!this.locked||mode!=='FLIGHT')return input;
+    const filtered={...input,forward:false,back:false};
+    if('pitchAxis' in filtered)filtered.pitchAxis=0;
+    return filtered;
+  }
 }
 
 return Object.freeze({
@@ -57386,8 +57411,332 @@ get ["Playback"]() { return Playback; }
 });
 })([__modules[0]]);
 
-// simulator.js
+// vendor/gamecontroller.js
 __modules[16] = (function(__deps) {
+
+/*
+ * Vendored: gamecontroller.js v1.5.0 (https://github.com/alvaromontoro/gamecontroller.js)
+ * MIT License - see LICENSE.gamecontroller. Minified production build, unmodified
+ * except for this browser guard wrapper and the ESM export below.
+ */
+(function(){
+if(typeof window==='undefined'||typeof navigator==='undefined')return;(()=>{"use strict";const t=(t,e="log")=>{"error"===e?console&&"function"==typeof console.error&&console.error(t):console&&"function"==typeof console.info&&console.info(t)},e=e=>t(e,"error"),n=()=>navigator.getGamepads&&"function"==typeof navigator.getGamepads||navigator.getGamepads&&"function"==typeof navigator.webkitGetGamepads||!1,o="Invalid property.",i="Invalid value. It must be a number between 0.00 and 1.00.",s="Button does not exist.",a="Unknown event name.",c=function(t){let n={id:t.index,buttons:t.buttons.length,axes:Math.floor(t.axes.length/2),axeValues:[],axeThreshold:[1],hapticActuator:null,vibrationMode:-1,vibration:!1,mapping:t.mapping,buttonActions:{},axesActions:{},pressed:{},set:function(t,n){if(["axeThreshold"].indexOf(t)>=0){if("axeThreshold"===t&&(!parseFloat(n)||n<0||n>1))return void e(i);this[t]=n}else e(o)},vibrate:function(t=.75,e=500){if(this.hapticActuator)switch(this.vibrationMode){case 0:return this.hapticActuator.pulse(t,e);case 1:return this.hapticActuator.playEffect("dual-rumble",{duration:e,strongMagnitude:t,weakMagnitude:t})}},triggerDirectionalAction:function(t,e,n,o,i){n&&o%2===i?(this.pressed[`${t}${e}`]||(this.pressed[`${t}${e}`]=!0,this.axesActions[e][t].before()),this.axesActions[e][t].action()):this.pressed[`${t}${e}`]&&o%2===i&&(delete this.pressed[`${t}${e}`],this.axesActions[e][t].after())},checkStatus:function(){let t={};const e=navigator.getGamepads?navigator.getGamepads():navigator.webkitGetGamepads?navigator.webkitGetGamepads():[];if(e.length){if(t=e[this.id],t.buttons)for(let e=0;e<this.buttons;e++)!0===t.buttons[e].pressed?(this.pressed[`button${e}`]||(this.pressed[`button${e}`]=!0,this.buttonActions[e].before()),this.buttonActions[e].action()):this.pressed[`button${e}`]&&(delete this.pressed[`button${e}`],this.buttonActions[e].after());if(t.axes){const e=t.axes.length%2;for(let n=0;n<2*this.axes;n++){const o=t.axes[n+e].toFixed(4),i=Math.floor(n/2);this.axeValues[i][n%2]=o,this.triggerDirectionalAction("right",i,o>=this.axeThreshold[0],n,0),this.triggerDirectionalAction("left",i,o<=-this.axeThreshold[0],n,0),this.triggerDirectionalAction("down",i,o>=this.axeThreshold[0],n,1),this.triggerDirectionalAction("up",i,o<=-this.axeThreshold[0],n,1)}}}},associateEvent:function(t,n,o){if(t.match(/^button\d+$/)){const i=parseInt(t.match(/^button(\d+)$/)[1]);i>=0&&i<this.buttons?this.buttonActions[i][o]=n:e(s)}else if("start"===t)this.buttonActions[9][o]=n;else if("select"===t)this.buttonActions[8][o]=n;else if("r1"===t)this.buttonActions[5][o]=n;else if("r2"===t)this.buttonActions[7][o]=n;else if("l1"===t)this.buttonActions[4][o]=n;else if("l2"===t)this.buttonActions[6][o]=n;else if("power"===t)this.buttons>=17?this.buttonActions[16][o]=n:e(s);else if(t.match(/^(up|down|left|right)(\d+)$/)){const i=t.match(/^(up|down|left|right)(\d+)$/),a=i[1],c=parseInt(i[2]);c>=0&&c<this.axes?this.axesActions[c][a][o]=n:e(s)}else if(t.match(/^(up|down|left|right)$/)){const e=t.match(/^(up|down|left|right)$/)[1];this.axesActions[0][e][o]=n}return this},on:function(t,e){return this.associateEvent(t,e,"action")},off:function(t){return this.associateEvent(t,(function(){}),"action")},after:function(t,e){return this.associateEvent(t,e,"after")},before:function(t,e){return this.associateEvent(t,e,"before")}};for(let t=0;t<n.buttons;t++)n.buttonActions[t]={action:()=>{},after:()=>{},before:()=>{}};for(let t=0;t<n.axes;t++)n.axesActions[t]={down:{action:()=>{},after:()=>{},before:()=>{}},left:{action:()=>{},after:()=>{},before:()=>{}},right:{action:()=>{},after:()=>{},before:()=>{}},up:{action:()=>{},after:()=>{},before:()=>{}}},n.axeValues[t]=[0,0];return t.hapticActuators?"function"==typeof t.hapticActuators.pulse?(n.hapticActuator=t.hapticActuators,n.vibrationMode=0,n.vibration=!0):t.hapticActuators[0]&&"function"==typeof t.hapticActuators[0].pulse&&(n.hapticActuator=t.hapticActuators[0],n.vibrationMode=0,n.vibration=!0):t.vibrationActuator&&"function"==typeof t.vibrationActuator.playEffect&&(n.hapticActuator=t.vibrationActuator,n.vibrationMode=1,n.vibration=!0),n},r={gamepads:{},axeThreshold:[1],isReady:n(),onConnect:function(){},onDisconnect:function(){},onBeforeCycle:function(){},onAfterCycle:function(){},getGamepads:function(){return this.gamepads},getGamepad:function(t){return this.gamepads[t]?this.gamepads[t]:null},set:function(t,n){if(["axeThreshold"].indexOf(t)>=0){if("axeThreshold"===t&&(!parseFloat(n)||n<0||n>1))return void e(i);if(this[t]=n,"axeThreshold"===t){const t=this.getGamepads(),e=Object.keys(t);for(let n=0;n<e.length;n++)t[e[n]].set("axeThreshold",this.axeThreshold)}}else e(o)},checkStatus:function(){const t=window.requestAnimationFrame||window.webkitRequestAnimationFrame,e=Object.keys(r.gamepads);r.onBeforeCycle();for(let t=0;t<e.length;t++)r.gamepads[e[t]].checkStatus();r.onAfterCycle(),e.length>0&&t(r.checkStatus)},init:function(){window.addEventListener("gamepadconnected",(e=>{const n=e.gamepad||e.detail.gamepad;if(t("Gamepad detected."),window.gamepads||(window.gamepads={}),n){if(!window.gamepads[n.index]){window.gamepads[n.index]=n;const t=c(n);t.set("axeThreshold",this.axeThreshold),this.gamepads[t.id]=t,this.onConnect(this.gamepads[t.id])}1===Object.keys(this.gamepads).length&&this.checkStatus()}})),window.addEventListener("gamepaddisconnected",(e=>{const n=e.gamepad||e.detail.gamepad;t("Gamepad disconnected."),n&&(delete window.gamepads[n.index],delete this.gamepads[n.index],this.onDisconnect(n.index))}))},on:function(t,n){switch(t){case"connect":this.onConnect=n;break;case"disconnect":this.onDisconnect=n;break;case"beforeCycle":case"beforecycle":this.onBeforeCycle=n;break;case"afterCycle":case"aftercycle":this.onAfterCycle=n;break;default:e(a)}return this},off:function(t){switch(t){case"connect":this.onConnect=function(){};break;case"disconnect":this.onDisconnect=function(){};break;case"beforeCycle":case"beforecycle":this.onBeforeCycle=function(){};break;case"afterCycle":case"aftercycle":this.onAfterCycle=function(){};break;default:e(a)}return this}};r.init();const h=r;n()?window.gameControl=h:e("Your web browser does not support the Gamepad API.")})();
+})();
+const gameControl = globalThis.gameControl;
+return Object.freeze({
+get ["gameControl"]() { return gameControl; }
+});
+})([]);
+
+// vendor/joypad.js
+__modules[17] = (function(__deps) {
+
+/*
+ * Vendored: joypad.js v2.3.5 (https://github.com/ArunMichaelDsouza/joypad.js)
+ * MIT License - see LICENSE.joypad. Minified build, unmodified except for this
+ * browser guard wrapper and the ESM export below.
+ */
+(function(){
+if(typeof window==='undefined'||typeof navigator==='undefined')return;/*	
+    joypad.js v2.3.5	
+    Copyright (c) 2019 Arun Michael Dsouza (amdsouza92@gmail.com)	
+    Licence: MIT	
+*/
+var a={events:{},publish:function a(b,c){if(this.events.hasOwnProperty(b))this.events[b].forEach(function(a){return a(c)})},subscribe:function a(b,c){if(!this.events.hasOwnProperty(b))this.events[b]=[];this.events[b].push(c);return{unsubscribe:(function(){var a=this.events[b].indexOf(c);if(-1!==a)this.events[b].splice(a,1)}).bind(this)}}};var a1={CONNECT:{NATIVE:"gamepadconnected",ALIAS:"connect"},DISCONNECT:{NATIVE:"gamepaddisconnected",ALIAS:"disconnect"},BUTTON_PRESS:{NATIVE:null,ALIAS:"button_press"},BUTTON_RELEASE:{NATIVE:null,ALIAS:"button_release"},AXIS_MOVEMENT:{NATIVE:null,ALIAS:"axis_move"}};var b={LEFT:{NAME:"left_stick",AXES:{X:0,Y:1}},RIGHT:{NAME:"right_stick",AXES:{X:2,Y:3}}};var c={LEFT:"left",RIGHT:"right",TOP:"top",BOTTOM:"bottom"};var d={button_0:0,button_1:1,button_2:2,button_3:3,button_4:4,button_5:5,button_6:6,button_7:7,button_8:8,button_9:9,button_10:10,button_11:11,button_12:12,button_13:13,button_14:14,button_15:15,button_16:16,button_17:17};var e=.8;var a2=function(a){if(console.warn&&"function"==typeof console.warn)console.warn(a);else console.log(a)};var b1=function(a,b){var c=[];Object.keys(b).forEach(function(d){if(b[d]===a)c.push(d);else if(Array.isArray(b[d])&& -1!==b[d].indexOf(a))c.push(d)});return c};var c1=function(a){return!!a&&!!a.type&&!!a.playEffect&&"function"==typeof a.playEffect||false};var d1=function(){return!!window.navigator.getGamepads&&"function"==typeof window.navigator.getGamepads||false};var f={loopStarted:false,instances:{},buttonEvents:{joypad:[]},settings:{axisMovementThreshold:e},remove:function a(b){return delete this.instances[b]},on:function c(d,e){switch(d){case a1.CONNECT.ALIAS:return a.subscribe(a1.CONNECT.ALIAS,e);case a1.DISCONNECT.ALIAS:return a.subscribe(a1.DISCONNECT.ALIAS,e);case a1.BUTTON_PRESS.ALIAS:return a.subscribe(a1.BUTTON_PRESS.ALIAS,e);case a1.BUTTON_RELEASE.ALIAS:return a.subscribe(a1.BUTTON_RELEASE.ALIAS,e);case a1.AXIS_MOVEMENT.ALIAS:return a.subscribe(a1.AXIS_MOVEMENT.ALIAS,e)}},vibrate:function a(b,c){var f=b.vibrationActuator;var g=c||this.settings.vibration;if(c1(f)){var h=f.type;return b.vibrationActuator.playEffect(h,g)}a2("No vibration actuator interface found - https://developer.mozilla.org/en-US/docs/Web/API/GamepadHapticActuator")},set:function a(b){var c=b.axisMovementThreshold,d=b.vibration,e=b.customButtonMapping;var f=parseFloat(c);if(!isNaN(f))this.settings.axisMovementThreshold=f;this.settings.vibration=d;this.settings.customButtonMapping=e},trigger:function b(c,d){return a.publish(c,d)}};var j=function(a){a.buttons.forEach(function(c,d1){var e=f.settings.customButtonMapping;var f1=e||d;var i=b1(d1,f1);var j=f.buttonEvents;if(i&&i.length)i.forEach(function(b){if(c.pressed){if(!j.joypad[a.index][b])j.joypad[a.index][b]={pressed:true,hold:false,released:false};j.joypad[a.index][b].button=c;j.joypad[a.index][b].index=d1;j.joypad[a.index][b].gamepad=a}else if(!c.pressed&&j.joypad[a.index][b]){j.joypad[a.index][b].released=true;j.joypad[a.index][b].hold=false}})})};var k=function(a){var c1=function(a){return new CustomEvent(a1.AXIS_MOVEMENT.ALIAS,{detail:a})};var g=f.settings.axisMovementThreshold;var h=a.axes;var i=h.length;var j=i/2;h.forEach(function(b1,d){if(Math.abs(b1)>g){var h=null;var i=null;var k=b1;h=d<j?b.LEFT.NAME:b.RIGHT.NAME;if(d===b.LEFT.AXES.X||d===b.RIGHT.AXES.X)i=b1<0?c.LEFT:c.RIGHT;if(d===b.LEFT.AXES.Y||d===b.RIGHT.AXES.Y)i=b1<0?c.TOP:c.BOTTOM;var l={gamepad:a,totalSticks:j,stickMoved:h,directionOfMovement:i,axisMovementValue:k,axis:d};return window.dispatchEvent(c1(l))}})};var m=function(a,b){if(b[a].pressed){l(a1.BUTTON_PRESS.ALIAS,b,a);b[a].pressed=false;b[a].hold=true;b[a].last_event=a1.BUTTON_PRESS.ALIAS}else if(b[a].hold);else if(b[a].released&&b[a].last_event===a1.BUTTON_PRESS.ALIAS){l(a1.BUTTON_RELEASE.ALIAS,b,a);delete b[a]}};var e1={id:null,start:function e(){var f1=window.requestAnimationFrame||window.webkitRequestAnimationFrame;var g=f.buttonEvents;var h=window.navigator.getGamepads();h=Array.prototype.slice.call(h);h.forEach(function(d,e){if(d){if(!g.joypad[e])g.joypad[e]={};f.instances[e]=d;j(d);k(d)}});g.joypad.forEach(function(a){if(a)Object.keys(a).forEach(function(b){m(b,a)})});this.id=f1(this.start.bind(this))},stop:function a(b){var c=window.cancelAnimationFrame||window.webkitCancelAnimationFrame;return c(b)}};var i=function(){window.addEventListener(a1.CONNECT.NATIVE,function(e){a.publish(a1.CONNECT.ALIAS,e);if(!f.loopStarted){f.loopStarted=true;return e1.start()}});window.addEventListener(a1.DISCONNECT.NATIVE,function(e){a.publish(a1.DISCONNECT.ALIAS,e);f.remove(e.gamepad.index);f.buttonEvents.joypad[e.gamepad.index]=null;if(!Object.keys(f.instances).length){f.loopStarted=false;return e1.stop(e1.id)}});window.addEventListener(a1.BUTTON_PRESS.ALIAS,function(b){return a.publish(a1.BUTTON_PRESS.ALIAS,b)});window.addEventListener(a1.BUTTON_RELEASE.ALIAS,function(b){return a.publish(a1.BUTTON_RELEASE.ALIAS,b)});window.addEventListener(a1.AXIS_MOVEMENT.ALIAS,function(b){return a.publish(a1.AXIS_MOVEMENT.ALIAS,b)})};var l=function(a,b,c){var d=function(b){return new CustomEvent(a,{detail:b})};var e=b[c],f=e.index,g=e.gamepad;var h={buttonName:c,button:b[c].button,index:f,gamepad:g};window.dispatchEvent(d(h))};i();if(d1())window.joypad=f;else{window.joypad={};a2("Your browser does not support the Gamepad API - https://developer.mozilla.org/en-US/docs/Web/API/Gamepad_API")}
+})();
+const joypad = globalThis.joypad;
+return Object.freeze({
+get ["joypad"]() { return joypad; }
+});
+})([]);
+
+// gamepad-input.js
+__modules[18] = (function(__deps) {
+const gameControl = __deps[0]["gameControl"];
+const joypad = __deps[1]["joypad"];
+
+
+
+const STICK_DEADZONE = .14;
+const TRIGGER_DEADZONE = .05;
+const PITCH_HOLD_THRESHOLD = .5;
+
+/** Standard gamepad button indices (W3C standard mapping). */
+const PAD_BUTTONS = Object.freeze({
+  lift: 0, boost: 2, camera: 3, triggerL: 6, triggerR: 7, reset: 8, zoomIn: 12, zoomOut: 13
+});
+
+const PAD_LABELS = Object.freeze([
+  {input: 'LS', action: 'Steer / yaw (analog)'},
+  {input: 'RS', action: 'Pitch + roll in flight, orbit camera on the ground'},
+  {input: 'RT', action: 'Throttle / boost (analog)'},
+  {input: 'LT', action: 'Brake / lift (analog)'},
+  {input: 'A / LB', action: 'Lift'},
+  {input: 'X', action: 'Boost'},
+  {input: 'Y', action: 'Cycle camera'},
+  {input: 'View', action: 'Reset'},
+  {input: 'D-pad ↑/↓', action: 'Zoom orbit camera'}
+]);
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const clamp01 = value => clamp(value, 0, 1);
+const NO_EDGES = Object.freeze({camera: false, reset: false, zoomIn: false, zoomOut: false, any: false});
+
+/** Radial-safe per-axis deadzone: values inside collapse to 0, outside rescale to full range. */
+function applyDeadzone(value, deadzone = STICK_DEADZONE) {
+  const axis = Number.isFinite(value) ? value : 0;
+  const magnitude = Math.abs(axis);
+  if (magnitude <= deadzone) return 0;
+  return Math.sign(axis) * (magnitude - deadzone) / (1 - deadzone);
+}
+
+function buttonValue(button) {
+  if (typeof button === 'object' && button !== null) {
+    if (Number.isFinite(button.value)) return clamp01(button.value);
+    return button.pressed ? 1 : 0;
+  }
+  return button ? 1 : 0;
+}
+
+function buttonPressed(button) {
+  if (typeof button === 'object' && button !== null) return !!button.pressed || buttonValue(button) > .5;
+  return !!button;
+}
+
+/** Normalize a raw Gamepad into simulator-facing axes. Sign rules match the keyboard:
+ *  stick left ≡ A (positive steer/yaw), stick back ≡ S (positive pitch), stick right ≡ E. */
+function computePadState(gamepad) {
+  if (!gamepad || !Array.isArray(gamepad.axes)) return null;
+  const axes = gamepad.axes;
+  const buttons = gamepad.buttons || [];
+  const axis = index => Number.isFinite(axes[index]) ? axes[index] : 0;
+  const value = index => buttonValue(buttons[index]);
+  const lsX = applyDeadzone(axis(0)), lsY = applyDeadzone(axis(1));
+  const rsX = applyDeadzone(axis(2)), rsY = applyDeadzone(axis(3));
+  return {
+    gamepad,
+    id: String(gamepad.id || 'GAMEPAD'),
+    lsX, lsY, rsX, rsY,
+    steerAxis: -lsX,
+    yawAxis: -lsX,
+    pitchAxis: rsY,
+    rollAxis: rsX,
+    triggerL: applyDeadzone(value(PAD_BUTTONS.triggerL), TRIGGER_DEADZONE),
+    triggerR: applyDeadzone(value(PAD_BUTTONS.triggerR), TRIGGER_DEADZONE),
+    buttonLift: value(PAD_BUTTONS.lift),
+    buttonBoost: value(PAD_BUTTONS.boost),
+    pitchHeld: Math.abs(axis(3)) > PITCH_HOLD_THRESHOLD,
+    buttons: buttons.map(buttonPressed)
+  };
+}
+
+/** Rising edges between the previous and current frame's pressed buttons. */
+function padEdges(previous, current) {
+  if (!current) return NO_EDGES;
+  const rise = index => !!current[index] && !previous?.[index];
+  const edges = {
+    camera: rise(PAD_BUTTONS.camera),
+    reset: rise(PAD_BUTTONS.reset),
+    zoomIn: rise(PAD_BUTTONS.zoomIn),
+    zoomOut: rise(PAD_BUTTONS.zoomOut),
+    any: false
+  };
+  edges.any = edges.camera || edges.reset || edges.zoomIn || edges.zoomOut ||
+    current.some((pressed, index) => pressed && !previous?.[index]);
+  return edges;
+}
+
+const invert = (flag, axis) => flag && axis !== 0 ? -axis : axis;
+
+/** Merge keyboard controls (already inversion-aware from Keybinds.input) with pad axes.
+ *  Axis fields are always finite so physics/controllers can prefer them; values are
+ *  bit-identical to the boolean keyboard path when no pad is connected.
+ *  Flight inversions apply to pad axes exactly once, only in FLIGHT - never ground. */
+function mergeControls(base, pad, inversions = {}, mode = 'GROUND') {
+  const flight = mode === 'FLIGHT';
+  let steerAxis = (base.left ? 1 : 0) - (base.right ? 1 : 0);
+  let yawAxis = (base.left ? 1 : 0) - (base.right ? 1 : 0);
+  let pitchAxis = (base.back ? 1 : 0) - (base.forward ? 1 : 0);
+  let rollAxis = (base.rollRight ? 1 : 0) - (base.rollLeft ? 1: 0);
+  let driveAxis = base.forward ? 1 : 0;
+  let brakeAxis = base.back ? 1 : 0;
+  let liftAxis = base.lift ? 1 : 0;
+  let boostAxis = base.boost ? 1 : 0;
+  if (pad) {
+    liftAxis += pad.buttonLift;
+    boostAxis += pad.buttonBoost;
+    if (flight) {
+      pitchAxis += invert(inversions.pitch, pad.pitchAxis);
+      yawAxis += invert(inversions.yaw, pad.yawAxis);
+      rollAxis += invert(inversions.roll, pad.rollAxis);
+      liftAxis += pad.triggerL;
+      boostAxis += pad.triggerR;
+    } else {
+      steerAxis += pad.steerAxis;
+      yawAxis += pad.yawAxis;
+      driveAxis += pad.triggerR;
+      brakeAxis += pad.triggerL;
+    }
+  }
+  return {
+    ...base,
+    steerAxis: clamp(steerAxis, -1, 1),
+    driveAxis: clamp01(driveAxis),
+    brakeAxis: clamp01(brakeAxis),
+    pitchAxis: clamp(pitchAxis, -1, 1),
+    yawAxis: clamp(yawAxis, -1, 1),
+    rollAxis: clamp(rollAxis, -1, 1),
+    liftAxis: clamp01(liftAxis),
+    boostAxis: clamp01(boostAxis)
+  };
+}
+
+function safeGetGamepads() {
+  try {
+    const pads = globalThis.navigator?.getGamepads?.();
+    return Array.isArray(pads) ? pads : null;
+  } catch { return null; }
+}
+
+const firstPad = () => safeGetGamepads()?.find?.(pad => pad && pad.connected !== false) || null;
+
+/** Connection lifecycle via gamecontroller.js; per-frame state via raw polling
+ *  (event-driven libraries are too coarse for analog driving axes). */
+class GamepadInput {
+  constructor({onStatus = null} = {}) {
+    this.onStatus = onStatus;
+    this.state = null;
+    this.connected = false;
+    this._previousButtons = [];
+  }
+
+  start() {
+    try {
+      gameControl?.on?.('connect', gamepad => {
+        this.connected = true;
+        this.onStatus?.({connected: true, id: String(gamepad?.id || 'GAMEPAD')});
+      });
+      gameControl?.on?.('disconnect', () => {
+        this.connected = false;
+        this.state = null;
+        this._previousButtons = [];
+        this.onStatus?.({connected: false});
+      });
+    } catch { /* A missing library degrades to raw polling only. */ }
+    const existing = firstPad();
+    if (existing) {
+      this.connected = true;
+      this.onStatus?.({connected: true, id: String(existing.id || 'GAMEPAD')});
+    }
+    return this;
+  }
+
+  /** Call exactly once per animation frame; returns {state, edges}. */
+  poll() {
+    const gamepad = firstPad();
+    if (!gamepad) {
+      if (this.connected) {
+        this.connected = false;
+        this.onStatus?.({connected: false});
+      }
+      this.state = null;
+      const hadButtons = this._previousButtons.length > 0;
+      this._previousButtons = [];
+      return {state: null, edges: hadButtons ? {...NO_EDGES, any: false} : NO_EDGES};
+    }
+    const state = computePadState(gamepad);
+    if (!state) return {state: null, edges: NO_EDGES};
+    const edges = padEdges(this._previousButtons, state.buttons);
+    this._previousButtons = state.buttons;
+    this.state = state;
+    this.connected = true;
+    return {state, edges};
+  }
+}
+
+/** Rumble helper on top of joypad.js; silently degrades where unsupported. */
+function vibratePulse(gamepad, {duration = 120, weakMagnitude = .4, strongMagnitude = .6} = {}) {
+  if (!gamepad) return false;
+  try {
+    joypad?.vibrate?.(gamepad, {startDelay: 0, duration, weakMagnitude, strongMagnitude});
+    return true;
+  } catch { return false; }
+}
+
+return Object.freeze({
+get ["STICK_DEADZONE"]() { return STICK_DEADZONE; },
+get ["TRIGGER_DEADZONE"]() { return TRIGGER_DEADZONE; },
+get ["PITCH_HOLD_THRESHOLD"]() { return PITCH_HOLD_THRESHOLD; },
+get ["PAD_BUTTONS"]() { return PAD_BUTTONS; },
+get ["PAD_LABELS"]() { return PAD_LABELS; },
+get ["applyDeadzone"]() { return applyDeadzone; },
+get ["buttonValue"]() { return buttonValue; },
+get ["buttonPressed"]() { return buttonPressed; },
+get ["computePadState"]() { return computePadState; },
+get ["padEdges"]() { return padEdges; },
+get ["mergeControls"]() { return mergeControls; },
+get ["GamepadInput"]() { return GamepadInput; },
+get ["vibratePulse"]() { return vibratePulse; }
+});
+})([__modules[16],__modules[17]]);
+
+// gamepad-rumble.js
+__modules[19] = (function(__deps) {
+const vibratePulse = __deps[0]["vibratePulse"];
+
+
+const clamp01 = value => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+
+/** Throttled dual-rumble scheduler. Every trigger has its own cooldown so boost
+ *  pulses never starve touchdown feedback. Injectable clock/vibrate for tests. */
+class GamepadRumble {
+  constructor({vibrate = vibratePulse, now = () => Date.now()} = {}) {
+    this._vibrate = vibrate;
+    this._now = now;
+    this._last = new Map();
+  }
+
+  /** kind: impact | boost | crash | launch. intensity 0..1 scales magnitude. */
+  pulse(gamepad, kind, intensity = 1, {duration, weak, strong} = {}) {
+    if (!gamepad) return false;
+    const level = clamp01(intensity);
+    if (level <= 0) return false;
+    const settings = {
+      impact: {duration: 140, weak: .5, strong: .9, cooldown: 160},
+      boost: {duration: 180, weak: .45, strong: .25, cooldown: 220},
+      crash: {duration: 520, weak: 1, strong: 1, cooldown: 900},
+      launch: {duration: 260, weak: .6, strong: .9, cooldown: 900}
+    }[kind];
+    if (!settings) return false;
+    const time = this._now();
+    if (time - (this._last.get(kind) ?? -Infinity) < settings.cooldown) return false;
+    this._last.set(kind, time);
+    return this._vibrate(gamepad, {
+      duration: duration ?? settings.duration,
+      weakMagnitude: (weak ?? settings.weak) * level,
+      strongMagnitude: (strong ?? settings.strong) * level
+    });
+  }
+
+  /** Drive rumble once per frame from simulation events and state. */
+  update(gamepad, {mode, previousMode, boosting = false, crashed = false, previousCrashed = false, events = null} = {}) {
+    if (!gamepad) return;
+    if (crashed && !previousCrashed) this.pulse(gamepad, 'crash', 1);
+    if (mode === 'FLIGHT' && previousMode === 'GROUND') this.pulse(gamepad, 'launch', 1);
+    if (events) for (const event of events) this.pulse(gamepad, 'impact', clamp01((Number(event?.g) || 0) / 6));
+    if (boosting && mode !== 'CRASHED') this.pulse(gamepad, 'boost', 1);
+  }
+
+  reset() { this._last.clear(); }
+}
+
+return Object.freeze({
+get ["GamepadRumble"]() { return GamepadRumble; }
+});
+})([__modules[18]]);
+
+// simulator.js
+__modules[20] = (function(__deps) {
 const THREE = __deps[0];
 const createRoadster = __deps[1]["createRoadster"];
 const VehiclePhysics = __deps[2]["VehiclePhysics"];
@@ -57407,6 +57756,11 @@ const CameraRig = __deps[12]["CameraRig"];
 const RenderPose = __deps[12]["RenderPose"];
 const simulationTimeScale = __deps[13]["simulationTimeScale"];
 const Playback = __deps[14]["Playback"];
+const GamepadInput = __deps[15]["GamepadInput"];
+const mergeControls = __deps[15]["mergeControls"];
+const GamepadRumble = __deps[16]["GamepadRumble"];
+
+
 
 
 
@@ -57445,6 +57799,7 @@ const keys=new Set(),physicalKeys=new Set(),pitchLock=new TakeoffPitchLock();
 // Physical release state survives focus/modal clearing of active driving keys.
 window.addEventListener('keydown',event=>{if(!event.repeat)physicalKeys.add(event.code);},true);
 let accumulator=0,last=performance.now(),frame=0;
+let lastControls=null,previousMode='GROUND',previousCrashed=false;
 const cameraRig=new CameraRig(camera,renderer.domElement),renderPose=new RenderPose(body);
 function reset(){playback.exit(body);playback.onReset(body);body.reset();renderPose.reset(body);controller.reset();pitchLock.reset();effects.reset();keys.clear();accumulator=0;ui.dismissLanding();syncModel();updateCamera(1,true);host.focus({preventScroll:true});}
 function exitReplay(){playback.exit(body);renderPose.reset(body);cameraRig.rebase(renderPose);keys.clear();accumulator=0;effects.reset();controller.reset();pitchLock.reset();host.focus({preventScroll:true});ui.update(telemetry());}
@@ -57457,15 +57812,22 @@ let bindingsActive=false;
 const keybindPanel=createKeybindPanel(keybinds,{onActive:value=>{bindingsActive=value;keys.clear();controller.reset();},onClose:()=>{keys.clear();host.focus({preventScroll:true});}});
 document.querySelector('#sim-keybinds').addEventListener('click',()=>keybindPanel.open());
 keybinds.subscribe(()=>keys.clear());
+let padStatus={connected:false,id:null},padFrame={state:null,edges:null};
+const pad=new GamepadInput({onStatus:info=>{padStatus=info;ui.update(telemetry());}});
+const rumble=new GamepadRumble();
 const input=()=>{
   const activeKeys=bindingsActive||playback.playing?new Set():keys;
-  pitchLock.update(body.mode,physicalKeys,keybinds);
-  return pitchLock.filter(keybinds.input(activeKeys,body.mode),body.mode);
+  const activePad=bindingsActive||playback.playing?null:padFrame.state;
+  pitchLock.update(body.mode,physicalKeys,keybinds,activePad?.pitchHeld||false);
+  const keyboardControls=keybinds.input(activeKeys,body.mode);
+  return pitchLock.filter(mergeControls(keyboardControls,activePad,keybinds.inversions,body.mode),body.mode);
 };
 const telemetry=()=>({...body.snapshot(),assistActive:controller.assistActive,controlMode:controller.mode,
-  pitchLocked:pitchLock.locked,pitchLockKeys:[...pitchLock.blocked].map(formatKey).join(' / '),cameraView:cameraRig.name,
+  pitchLocked:pitchLock.locked,pitchLockKeys:[...pitchLock.blocked].map(formatKey).concat(pitchLock.padBlocked?['STICK']:[]).join(' / '),cameraView:cameraRig.name,
+  gamepad:padStatus.connected?(padStatus.id||'GAMEPAD').replace(/\s*\(.*\)\s*$/,'').slice(0,26):null,
   slowMo:!playback.playing&&simulationTimeScale(body,settings)===.5,recording:playback.recording,
   recordSeconds:playback.duration,replayReady:playback.ready,replaying:playback.playing,replayProgress:playback.progress,time});
+pad.start();
 const isControl=code=>ACTIONS.some(action=>keybinds.matches(action.id,code));
 const drivingTarget=target=>!target?.closest?.('#sim-hud, input, select, textarea, button, summary, a, [contenteditable]:not([contenteditable="false"])');
 window.addEventListener('keydown',event=>{
@@ -57509,6 +57871,19 @@ function animate(now){
   requestAnimationFrame(animate);
   const dt=Math.min(.1,Math.max(0,(now-last)/1000));last=now;
   if(document.hidden)return;
+  padFrame=pad.poll();
+  const padEdges=padFrame.edges;
+  if(!bindingsActive){
+    if(padEdges.any)audio.unlock();
+    if(padEdges.camera){cameraRig.cycle();ui.update(telemetry());}
+    if(padEdges.reset)reset();
+    if(cameraRig.mode===3){
+      if(padEdges.zoomIn)cameraRig.zoom(Math.exp(-.18));
+      if(padEdges.zoomOut)cameraRig.zoom(Math.exp(.18));
+      // Right stick orbits only when it is not flying the attitude loop.
+      if(padFrame.state&&(body.mode!=='FLIGHT'||playback.playing))cameraRig.rotate(padFrame.state.rsX*240*dt,padFrame.state.rsY*240*dt);
+    }
+  }
   if(playback.playing){
     const ended=playback.advance(dt,body);renderPose.reset(body);syncModel();world.update(time);effects.update(dt,body);updateCamera(dt);
     audio.update({speed:body.v.length(),thrust:body.thrust,slip:body.slip});
@@ -57517,15 +57892,19 @@ function animate(now){
     return;
   }
   accumulator+=dt; // Wall-clock accumulator; each tick consumes real time.
+  const impactEvents=[];
   while(accumulator>=STEP){
     const effectiveStep=STEP*simulationTimeScale(body,settings);
-    const controls=input(),throttles=controller.update(effectiveStep,body,controls,settings);
+    const controls=input();lastControls=controls;const throttles=controller.update(effectiveStep,body,controls,settings);
     renderPose.capture(body);
     body.step(effectiveStep,controls,throttles,settings);playback.record(effectiveStep,body);
-    pitchLock.update(body.mode,physicalKeys,keybinds);time+=effectiveStep;
+    pitchLock.update(body.mode,physicalKeys,keybinds,padFrame.state?.pitchHeld||false);time+=effectiveStep;
     npcs.update(effectiveStep,time,body);accumulator-=STEP;
-    while(body.events.length){const event=body.events.shift();ui.landing(event);audio.impact(Math.min(1,event.g/8));}
+    while(body.events.length){const event=body.events.shift();impactEvents.push(event);ui.landing(event);audio.impact(Math.min(1,event.g/8));}
   }
+  rumble.update(padFrame.state?.gamepad,{mode:body.mode,previousMode,boosting:!!lastControls&&lastControls.boostAxis>.5,
+    crashed:body.crashed,previousCrashed,events:impactEvents});
+  previousMode=body.mode;previousCrashed=body.crashed;
   renderPose.sample(body,accumulator/STEP);
   syncModel();world.update(time);effects.update(dt*simulationTimeScale(body,settings),body);updateCamera(dt);
   audio.update({speed:body.v.length(),thrust:body.thrust,slip:body.slip});
@@ -57534,12 +57913,12 @@ function animate(now){
 }
 syncModel();updateCamera(1,true);ui.update({...body.snapshot(),time});
 // A small explicit diagnostic surface enables repeatable integration testing.
-window.rocketLab={body,controller,scene,model,npcs,world,audio,ui,reset,input,keys,physicalKeys,keybinds,keybindPanel,pitchLock,cameraRig,renderPose,playback,exitReplay,get settings(){return {...settings};},get time(){return time;},get frame(){return frame;}};
+window.rocketLab={body,controller,scene,model,npcs,world,audio,ui,reset,input,keys,physicalKeys,keybinds,keybindPanel,pitchLock,cameraRig,renderPose,playback,exitReplay,pad,rumble,get settings(){return {...settings};},get time(){return time;},get frame(){return frame;}};
 requestAnimationFrame(animate);
 
 return Object.freeze({
 
 });
-})([__modules[0],__modules[2],__modules[4],__modules[3],__modules[5],__modules[6],__modules[7],__modules[8],__modules[9],__modules[10],__modules[11],__modules[12],__modules[13],__modules[14],__modules[15]]);
+})([__modules[0],__modules[2],__modules[4],__modules[3],__modules[5],__modules[6],__modules[7],__modules[8],__modules[9],__modules[10],__modules[11],__modules[12],__modules[13],__modules[14],__modules[15],__modules[18],__modules[19]]);
 })();
 </script></body></html>

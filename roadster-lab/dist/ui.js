@@ -12,7 +12,7 @@ export function createUI({onReset = () => {}, onRefill = () => {}, onSettings = 
   root.innerHTML = `
     <header class="sim-header">
       <div class="sim-brand"><span class="sim-eyebrow">EXPERIMENTAL VEHICLE PROGRAM / 01</span><h1>ROADSTER <span>/ ROCKET LAB</span></h1></div>
-      <div class="sim-mission"><span class="sim-status-dot"></span><strong id="sim-mode">GROUND</strong><span id="sim-assist-status">ASSIST READY</span><span id="sim-camera-view">VIEW: 3/4 CHASE</span><span id="sim-record-status" hidden>REC</span><span id="sim-slow-mo" hidden>SLOW-MO 0.5x</span><time id="sim-time">T+ 00:00</time></div>
+      <div class="sim-mission"><span class="sim-status-dot"></span><strong id="sim-mode">GROUND</strong><span id="sim-assist-status">ASSIST READY</span><span id="sim-camera-view">VIEW: 3/4 CHASE</span><span id="sim-gamepad" class="sim-gamepad" hidden></span><span id="sim-record-status" hidden>REC</span><span id="sim-slow-mo" hidden>SLOW-MO 0.5x</span><time id="sim-time">T+ 00:00</time></div>
     </header>
     <div id="sim-pitch-warning" class="sim-pitch-warning" role="alert" aria-live="assertive" hidden></div>
     <aside class="sim-left" aria-label="Vehicle telemetry">
@@ -64,7 +64,7 @@ export function createUI({onReset = () => {}, onRefill = () => {}, onSettings = 
       </section>
       <details class="sim-panel sim-help" open>
         <summary>FLIGHT MANUAL <span>ESC TO DRIVE / HIDE −</span></summary>
-        <div class="sim-key-grid"><div><kbd data-key-action="forward">W</kbd><kbd data-key-action="back">S</kbd><span>Accelerate / brake <small>Ground</small></span></div><div><kbd data-key-action="pitchDown">W</kbd><kbd data-key-action="pitchUp">S</kbd><span>Nose down / up <small>Flight</small></span></div><div><kbd data-key-action="left">A</kbd><kbd data-key-action="right">D</kbd><span>Steer / yaw</span></div><div><kbd data-key-action="rollLeft">Q</kbd><kbd data-key-action="rollRight">E</kbd><span>Roll left / right</span></div><div><kbd data-key-action="lift">Space</kbd><span>Lift</span><kbd data-key-action="boost">Shift</kbd><span>Boost</span></div><div><kbd data-key-action="camera">C</kbd><span>Camera</span><kbd data-key-action="reset">R</kbd><span>Reset</span></div></div>
+        <div class="sim-key-grid"><div><kbd data-key-action="forward">W</kbd><kbd data-key-action="back">S</kbd><span>Accelerate / brake <small>Ground</small></span></div><div><kbd data-key-action="pitchDown">W</kbd><kbd data-key-action="pitchUp">S</kbd><span>Nose down / up <small>Flight</small></span></div><div><kbd data-key-action="left">A</kbd><kbd data-key-action="right">D</kbd><span>Steer / yaw</span></div><div><kbd data-key-action="rollLeft">Q</kbd><kbd data-key-action="rollRight">E</kbd><span>Roll left / right</span></div><div><kbd data-key-action="lift">Space</kbd><span>Lift</span><kbd data-key-action="boost">Shift</kbd><span>Boost</span></div><div><kbd data-key-action="camera">C</kbd><span>Camera</span><kbd data-key-action="reset">R</kbd><span>Reset</span></div><div><kbd>LS</kbd><kbd>RT/LT</kbd><span>Steer / throttle / brake <small>Gamepad</small></span></div><div><kbd>RS</kbd><kbd>Y · View</kbd><span>Camera / roll + pitch <small>Gamepad</small></span></div></div>
       </details>
     </footer>`;
   document.body.appendChild(root);
@@ -121,6 +121,8 @@ export function createUI({onReset = () => {}, onRefill = () => {}, onSettings = 
     root.classList.toggle('sim-crashed', crashed);
     root.classList.toggle('sim-low-gas', pressure < 5);
     text('camera-view', `VIEW: ${state.cameraView || '3/4 CHASE'}`);
+    nodes.gamepad.hidden = !state.gamepad;
+    if (state.gamepad) text('gamepad', `PAD: ${state.gamepad}`);
     nodes['slow-mo'].hidden = !state.slowMo;
     text('record-status', state.replaying ? 'REPLAYING' : `● REC ${Math.max(0,finite(state.recordSeconds)).toFixed(1)}s`);
     nodes['record-status'].hidden = !state.recording && !state.replaying;

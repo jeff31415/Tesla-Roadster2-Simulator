@@ -57,8 +57,12 @@ export class FlightController {
     if (body.mode !== 'FLIGHT') {
       this.reset();
       // Ground steering and drive belong to the wheel controller, not the jets.
-      if (input.boost) out.fill(1, 0, 4);
-      if (input.lift) out.fill(1, 4, 8);
+      // Axis fields (always finite from the input merge) scale the jets linearly;
+      // boolean-only callers (tests) fall back to full deflection.
+      const boost = Number.isFinite(input.boostAxis) ? clamp(input.boostAxis, 0, 1) : Number(!!input.boost);
+      const lift = Number.isFinite(input.liftAxis) ? clamp(input.liftAxis, 0, 1) : Number(!!input.lift);
+      if (boost > 0) out.fill(boost, 0, 4);
+      if (lift > 0) out.fill(lift, 4, 8);
       return out;
     }
 
@@ -78,11 +82,15 @@ export class FlightController {
     const omega = [finite(body.omega?.x), finite(body.omega?.y), finite(body.omega?.z)];
     // Pilot-facing roll convention: Q/rollLeft commands negative body-X,
     // E/rollRight positive. Flight yaw now shares ground's D=-Y/A=+Y baseline.
-    const axes = [Number(!!input.rollRight) - Number(!!input.rollLeft),
-      Number(!!input.left) - Number(!!input.right),
-      Number(!!input.back) - Number(!!input.forward)];
+    // Finite axis fields come from the gamepad merge; booleans remain the fallback.
+    const command = (axisValue, positive, negative) => Number.isFinite(axisValue)
+      ? clamp(axisValue, -1, 1)
+      : Number(!!positive) - Number(!!negative);
+    const axes = [command(input.rollAxis, input.rollRight, input.rollLeft),
+      command(input.yawAxis, input.left, input.right),
+      command(input.pitchAxis, input.back, input.forward)];
     const rate = clamp(finite(settings.rate, 180), 90, 360) * DEG;
-    let requestedLift = input.lift ? 1 : 0;
+    let requestedLift = Number.isFinite(input.liftAxis) ? clamp(input.liftAxis, 0, 1) : Number(!!input.lift);
     const assisted = !!settings.assisted;
     const wasLanding = this.landingActive;
     this.landingActive = false;
@@ -162,7 +170,8 @@ export class FlightController {
       torque[2] = axes[2] * .325 * 2 * (frontArm + rearArm) * liftForce;
     }
 
-    if (input.boost) out.fill(1, 0, 4);
+    const boostCommand = Number.isFinite(input.boostAxis) ? clamp(input.boostAxis, 0, 1) : Number(!!input.boost);
+    if (boostCommand > 0) out.fill(boostCommand, 0, 4);
     const yaw = clamp(torque[1] / (yawArm * yawForce), -1, 1);
     out[8] = Math.max(0, yaw);
     out[9] = Math.max(0, -yaw);

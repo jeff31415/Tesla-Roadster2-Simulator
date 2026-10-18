@@ -3,15 +3,18 @@
 ## 当前结果
 
 - `node --test scripts/test-simulator.mjs`：**148 passed，0 failed，0 skipped**。
+- `node --test scripts/test-gamepad.mjs`：**14 passed**（手柄死区重标定、标准映射符号规则、按键值域、边沿检测、无手柄逐位等价、叠加钳制、地／飞触发器映射、飞行轴反转、起飞互锁、模拟1.0与键盘轨迹逐位一致、线性喷口分配、震动冷却与事件派生、GamepadInput 热插拔）。
+- `node --test scripts/test-vendor-gamepad.mjs`：**3 passed**（无 window/navigator 时惰性、`gameControl.on/off` 与 `joypad.on/vibrate/set` 暴露、无 eval／source map，webpack eval devtool 已改用生产版 dist）。
 - `node scripts/check-ui-state.mjs`：**PASS**。该测试读取 `dist/viewer.html`，覆盖原查看器的 DOM 状态、模式、展开滑块、喷口说明、GLB 导出与无 WebGL 回退；不把 DOM mock 当作真实渲染证明。
 - `npm run check`：**PASS**。6746 三角形、283 网格、10 喷口、6 张资料图片；GLB 522356 bytes、270 导出节点。
 - `python3 scripts/test-browser.py`：真实无头 Chromium **66 项检查通过**；模拟器与查看器均无 JavaScript `pageerror`。使用软件 WebGL 参数 `--enable-unsafe-swiftshader`，不是特定 GPU 的性能验证。
 
 ## 单文件分发构建验证
 
-- `npm run build`：**PASS**；17模块，`dist/roadster-rocket-standalone.html` **1,480,037 bytes**。Three.js、MIT许可、CSS与模拟器内联，无外部模块加载。
-- `node --test scripts/test-single-html.mjs scripts/test-simulator.mjs`：**165/165 passed**（17项构建＋148项模拟器测试）。验证确定性、脚本编译、完整模块／CSS／许可、路径独立执行、非法模块语法／循环／越界引用拒绝，以及HTML／模块／CSS／许可直写与符号链接覆写保护。
-- `python3 scripts/test-standalone.py`：真实Chromium **26/26 passed**。只复制生成HTML到含空格／Unicode的隔离临时目录，使用 `file://` 与离线浏览器上下文；**HTTP请求0、其他资源请求0、请求失败0、pageerror0**。覆盖WebGL渲染、驾驶、喷流耗气、重置、改键、轴反转、实际起飞保护、LANDING和音频解锁。覆盖新增Orbit拖拽滚轮／驾驶、子弹时间空地切换、2×2网格状态、真实录制／reset回放／Esc退出与自然结束。前轮Reviewer曾独立运行旧16项；本轮26项由集成方完整执行。
+- `npm run build`：**PASS**；21模块（新增 `gamepad-input.js`、`gamepad-rumble.js` 与 vendored `gamecontroller.js`、`joypad.js`），`dist/roadster-rocket-standalone.html` **1,563,997 bytes**。Three.js、gamecontroller／joypad MIT许可、CSS与模拟器内联，无外部模块加载。
+- `node --test scripts/test-single-html.mjs`：**17/17 passed**。验证确定性、脚本编译、完整21模块／CSS／许可、路径独立执行、非法模块语法／循环／越界引用拒绝，以及HTML／模块／CSS／许可直写与符号链接覆写保护。
+- 全量Node回归：**182/182 passed**（模拟器148＋构建17＋手柄14＋第三方库3）。
+- `python3 scripts/test-standalone.py`：真实Chromium **26/26 passed**。只复制生成HTML到含空格／Unicode的隔离临时目录，使用 `file://` 与离线浏览器上下文；**HTTP请求0、其他资源请求0、请求失败0、pageerror0**。覆盖WebGL渲染、驾驶、喷流耗气、重置、改键、轴反转、实际起飞保护、LANDING和音频解锁、Orbit拖拽滚轮、子弹时间空地切换、2×2网格状态、真实录制／reset回放／Esc退出与自然结束，以及**21模块初始化（含 `rocketLab.pad.poll/start` 与 `rocketLab.rumble.update` 接线）**。前轮Reviewer曾独立运行旧16项；26项由集成方完整执行。
 - Reviewer首轮发现输出路径可能覆写Three许可或通过符号链接覆写输入，已改为canonical realpath比较并补测试；针对性复审 **Approve for commit**，17项构建回归独立通过。
 - 构建器为本项目约束语法设计，不是通用ESM转换器；不保证hard-link别名／恶意并发文件系统修改防护。离线浏览器配置持久化受各浏览器file-origin政策影响，已有异常回退。跨浏览器／真实GPU仍未验收。
 
@@ -42,6 +45,15 @@
 8. **起飞持键保护**：默认W与自定义油门I／低头K真实起飞均验证双向Pitch阻断、物理键名警告、keyup立即解除、新按键生效及反转不能绕过；额外覆盖HUD焦点清键＋auto-repeat绕过回归。
 9. **飞行轴反转**：所有8种组合只交换对应飞行输入，实际直接／辅助力矩随之反转，地面物理转向与油门不变；兼容旧version1载入、无效数据／存储失败回退、默认恢复false。共新增26项单元测试，原86项保留。
 
+## 手柄输入（Gamepad）
+
+- **架构**：`dist/gamepad-input.js` 每帧轮询 `navigator.getGamepads()`（事件库粒度不足以驱动模拟量），`gamecontroller.js` 负责连接／断开事件与 `PAD:` HUD，`joypad.js` 提供 `vibrate` 振动；两库以 IIFE＋命名导出包装 vendored，Node 测试下惰性无害。
+- **符号与死区**：摇杆死区0.14、扳机0.05，区内归零、区外按 `(m-d)/(1-d)` 重标定。左≡A（转向／偏航正Y）、后拉≡S（俯仰抬头）、右≡E（滚转）；RT＝油门／助推、LT＝刹车／升力、A/LB＝升力、X＝助推、Y＝相机、View＝重置、D-pad↑↓＝Orbit缩放，映射固定不进改键浮层。
+- **合并语义**：`mergeControls` 输出恒为有限轴字段，无手柄时与布尔键盘路径**逐位一致**（测试断言）；手柄与键盘同向叠加按±1钳制。飞行反转只作用于手柄摇杆轴且仅FLIGHT模式（由 `keybinds.inversions` 统一开关），地面转向永不反转。
+- **互锁**：`takeoff-lock.js` 接受 `padBlocked`＋`padPitchHeld`（右摇杆|y|>0.5），地面→飞行瞬间按住即双向阻断俯仰，回中解除；与物理按键释放互锁同一条 fail-closed 路径。
+- **震动**：`gamepad-rumble.js` 按 kind 独立冷却（impact 160ms／boost 220ms／crash 900ms／launch 900ms），撞击强度 `g/6` 线性、g=0不震，坠毁／发射沿触发，助推按500ms节奏重复；注入时钟与vibrate可测。
+- **等价性**：`driveAxis=1 ≡ forward=true`、`steerAxis=1 ≡ left=true` 等在真实 `VehiclePhysics` 上跑90帧，位置／角速度／四元数逐位一致；半油门／半转向落在满幅与零之间。控制器侧 RT/LT/A/X 线性填充节流，飞行轴按 `axis×rate` 缩放目标角速率。
+
 ## 浏览器检查
 
 脚本：`scripts/test-browser.py`。使用 Python 的可选 `playwright` 包及已安装 Chromium；模拟器运行本身不需要这些依赖。先启动静态服务器，再执行：
@@ -63,6 +75,7 @@ python3 scripts/test-browser.py
 
 - blur／visibilitychange 在浏览器内显式派发事件验证注册的处理逻辑，**没有验证操作系统切窗或真实后台标签页调度**。
 - 未进行跨浏览器、真实移动硬件、真实 GPU 性能、音频主观体验或长时间人工游玩验收；移动尺寸仅在 Chromium 中模拟视口。
+- **手柄为软件层验证**：无真实手柄硬件接入，模拟量手感、振动强度、XInput／DualSense 标准映射差异与热插拔均未真机测试；`getGamepads()` 在无手柄环境返回空即静默降级为纯键盘。
 - 本轮扩展浏览器脚本在软件渲染下曾超过170秒；测试场景现将WebGL像素比降为0.5、保留原CSS视口，最终在240秒工具上限内完整通过66项。此优化仅在测试脚本内，不改变游戏默认渲染。浏览器／操作系统保留快捷键不保证可捕获。
 - 起飞物理键的keyup若在浏览器失焦期间丢失，会保守保留锁定；重新按下并松开提示键恢复。这是fail-closed设计，不会因焦点清键误解锁。
 - 接地数值与控制回归验证的是本游戏实现，不代表真实车辆性能或物理参数校准。

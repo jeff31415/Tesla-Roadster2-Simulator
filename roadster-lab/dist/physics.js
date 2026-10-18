@@ -40,7 +40,9 @@ export class VehiclePhysics {
     for(let i=0;i<10;i++)this.throttles[i]=this.crashed?0:clamp(Number.isFinite(throttles[i])?throttles[i]:0,0,1);
     // Ground steering uses the driver's screen-side convention. This sign is
     // deliberately independent of the flight controller's yaw mixer.
-    const target=this.crashed?0:((input.left?1:0)-(input.right?1:0))*.49;
+    // steerAxis (gamepad/pad merge) wins when present; booleans stay bit-identical.
+    const steer=Number.isFinite(input.steerAxis)?clamp(input.steerAxis,-1,1):((input.left?1:0)-(input.right?1:0));
+    const target=this.crashed?0:steer*.49;
     this.steer+=(target-this.steer)*(1-Math.exp(-dt*9));
     let peakG=0, hadContact=false;
     // Four solver microsteps stabilize damping and hard bump stops, while the
@@ -83,12 +85,14 @@ export class VehiclePhysics {
         const longitudinalSpeed=pv.dot(forward),lateralSpeed=pv.dot(lateral);
         let longitudinal=-longitudinalSpeed*38;
         if(!this.crashed&&this.mode==='GROUND'){
-          if(input.forward&&w.x<0)longitudinal+=4500*Math.max(.22,1-Math.abs(longitudinalSpeed)/105);
-          if(input.back){
-            if(longitudinalSpeed>.5)longitudinal-=Math.min(6000,longitudinalSpeed*m/(4*h));
-            else if(w.x<0)longitudinal-=3000;
+          const drive=Number.isFinite(input.driveAxis)?clamp(input.driveAxis,0,1):(input.forward?1:0);
+          const brake=Number.isFinite(input.brakeAxis)?clamp(input.brakeAxis,0,1):(input.back?1:0);
+          if(drive>0&&w.x<0)longitudinal+=4500*drive*Math.max(.22,1-Math.abs(longitudinalSpeed)/105);
+          if(brake>0){
+            if(longitudinalSpeed>.5)longitudinal-=Math.min(6000,longitudinalSpeed*m/(4*h))*brake;
+            else if(w.x<0)longitudinal-=3000*brake;
           }
-          if(!input.forward&&!input.back&&Math.abs(longitudinalSpeed)<.25)longitudinal-=longitudinalSpeed*m/(4*h);
+          if(drive<=0&&brake<=0&&Math.abs(longitudinalSpeed)<.25)longitudinal-=longitudinalSpeed*m/(4*h);
         }
         const latForce=-lateralSpeed*7200;
         const limit=normal*1.12,desired=Math.hypot(longitudinal,latForce),scale=desired>limit?limit/(desired||1):1;
